@@ -9,6 +9,7 @@ You may set the configure the server through `bunker::server::Builder`. The conf
 - End-connection message: The string received from the controller that signals Bunker to end the connection with the client.
 - Parse options: Informs Bunker how it should split the incoming data for the path and the message.
 - Debug: Determines state of the debugger (on/off).
+- Debug Formatter: Registers custom formatters for debugging, otherwise uses a default formatter.
 - Route map: Used for matching the request's path to any controller registered to the route map.
 
 ## Example

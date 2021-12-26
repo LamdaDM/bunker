@@ -1,30 +1,58 @@
-use std::{sync::Arc};
+use std::{sync::Arc, io::{stdout, Write, ErrorKind, stderr}};
 
-use crate::server::RouteMap;
+use crate::{server::RouteMap, registerable::{self, DebugFmt}};
 pub struct Debug {
-    state: bool
+    state: bool,
+    w: Box<dyn registerable::DebugFmt>
 }
 
 #[allow(dead_code)]
 impl Debug {
-    pub fn on() -> Debug { Debug{ state: true } }
+    pub fn new_on(w: Box<dyn registerable::DebugFmt>) -> Debug { Debug{ state: true, w } }
 
-    pub fn off() -> Debug { Debug{ state: false } }
+    pub fn new_off(w: Box<dyn registerable::DebugFmt>) -> Debug { Debug{ state: false, w } }
+
+    pub fn off(&mut self) { self.state = false; }
+    pub fn on(&mut self) { self.state = true; }
 
     pub fn state(&self) -> bool { self.state }
 
     pub fn flip(&mut self) { self.state = !self.state; }
 
-    pub fn write(&self, origin: &str, msg: &str) {
+    pub fn write(&self, origin: &str, message: &str) {
         if self.state {
-            println!("{o}:\n{m}", o = &origin, m = &msg);
+            match stdout().write_all(self.w.debug(origin, message).as_bytes()) {
+                Ok(_) => (),
+                Err(err) => match err.kind() {
+                    ErrorKind::Interrupted => (),
+                    _other => self.write_err("cfg::Debug::write", &format!("IO Error: {}", &err)),
+                }
+            };
         }
     }
 
-    pub fn write_err(&self, origin: &str, msg: &str) {
+    pub fn write_err(&self, origin: &str, message: &str) {
         if self.state {
-            eprintln!("{o}:\n{m}", o = &origin, m = &msg);
+            match stderr().write_all(self.w.debug(origin, message).as_bytes()) {
+                Ok(_) => (),
+                Err(err) => match err.kind() {
+                    ErrorKind::Interrupted => (),
+                    _other => self.write_err("cfg::Debug::write", &format!("IO Error: {}", &err)),
+                }
+            };        
         }
+    }
+}
+
+pub struct DefaultDebugger;
+
+impl DebugFmt for DefaultDebugger {
+    fn debug(&self, origin: &str, message: &str) -> String{
+        format!("{}:\n{}", origin, message)
+    }
+
+    fn debug_err(&self, origin: &str, message: &str) -> String {
+        format!("{}:\nERROR! {}", origin, message)
     }
 }
 

@@ -1,4 +1,4 @@
-use crate::{exception::BunkerError, internal::Threadpool, registerable, cfg};
+use crate::{exception::BunkerError, internal::Threadpool, registerable, cfg::{self, DefaultDebugger}};
 
 use std::{cell::Cell, collections::BTreeMap, io::{ErrorKind, Read, Write}, net::{SocketAddr, TcpListener}, rc::Rc, sync::Arc};
 
@@ -15,7 +15,8 @@ pub type RouteMap = BTreeMap<String, Box<dyn registerable::Controller>>;
 /// read_buffer_size: 1024
 /// shutdown_msg: "CCONN"
 /// route_map: Empty
-/// parse_options: position(1) 
+/// parse_options: position(1),
+/// debug_writer: Default Writer
 /// debug: On
 /// ```
 #[allow(dead_code)]
@@ -27,6 +28,7 @@ pub struct Builder {
     endconn_msg: String,
     parse_options: cfg::ParseOptions,
     debug: cfg::Debug,
+    dw: Option<Box<dyn registerable::DebugFmt>>,
     rm: RouteMap
 }
 
@@ -39,17 +41,30 @@ impl Builder {
             addr: [127, 0, 0, 1],
             endconn_msg: "CCONN".to_string(),
             parse_options: cfg::ParseOptions::position(1),
-            debug: cfg::Debug::on(),
+            debug: cfg::Debug::new_on(Box::new(DefaultDebugger)),
+            dw: None,
             rm: RouteMap::new()
         }
     }
 
     /// Will stop Bunker from writing debugging information to the standard output.
-    pub fn debugger_off(self) -> Builder {
-        Builder{ debug: cfg::Debug::off(), ..self }
+    pub fn debugger_off(mut self) -> Builder {
+        self.debug.off();
+        self
     }
 
-    /// Sets the port for the TCP server.
+    /// Registers a custom implementation of `registerable::DebugFmt` for debugging. 
+    pub fn set_custom_debugger(self, debugger: Box<dyn registerable::DebugFmt>) -> Builder {
+        let state = if self.debug.state() {
+            cfg::Debug::new_on(debugger)
+        } else { 
+            cfg::Debug::new_off(debugger)
+        };
+
+        Builder { debug: state, ..self }
+
+    }
+
     pub fn port(self, port: u16) -> Builder { 
         Builder{ port, ..self } 
     }
