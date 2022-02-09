@@ -15,9 +15,10 @@ pub type RouteMap = BTreeMap<String, Box<dyn registerable::Controller>>;
 /// read_buffer_size: 1024
 /// shutdown_msg: "CCONN"
 /// route_map: Empty
-/// parse_options: position(1),
+/// parse_options: position(1)
 /// debug_writer: Default Writer
 /// debug: On
+/// max_response_length: 9999
 /// ```
 #[allow(dead_code)]
 pub struct Builder {
@@ -29,7 +30,8 @@ pub struct Builder {
     parse_options: cfg::ParseOptions,
     debug: cfg::Debug,
     dw: Option<Box<dyn registerable::DebugFmt>>,
-    rm: RouteMap
+    rm: RouteMap,
+    max_response_length: usize
 }
 
 impl Builder {
@@ -43,7 +45,8 @@ impl Builder {
             parse_options: cfg::ParseOptions::position(1),
             debug: cfg::Debug::new_on(Box::new(DefaultDebugger)),
             dw: None,
-            rm: RouteMap::new()
+            rm: RouteMap::new(),
+            max_response_length: 9999
         }
     }
 
@@ -71,6 +74,10 @@ impl Builder {
 
     pub fn addr(self, addr: [u8; 4]) -> Builder {
         Builder{ addr, ..self }
+    }
+
+    pub fn max_response_length(self, max_response_length: usize) -> Builder {
+        Builder{ max_response_length, ..self }
     }
 
     /// Sets the number of threads given to the internal threadpool.
@@ -121,6 +128,7 @@ impl Builder {
             parse_options: self.parse_options,
             debug: self.debug,
             rm: self.rm,
+            mrl: self.max_response_length
         })
     }
     
@@ -289,7 +297,10 @@ impl Host {
 
                             // Writes to the stream and then handles buffers.
                             cfg.debug.write(&local_debug_handle, &format!("Writing response: {}", res));
-                            res.push('\n');
+
+                            // Prepend length of message to response according to mrl
+                            let res = Host::prepend_length(&res, cfg.mrl).unwrap();
+
                             stream.write(res.as_bytes()).unwrap();
                             stream.flush().unwrap();
                             buff.flush().unwrap();
@@ -310,5 +321,31 @@ impl Host {
         }
         
         self.cfg.debug.write(DEBUG_HANDLE, "Shutting down server...");
+    }
+
+    /// Prepends length of the message to the response, according to the given response length.
+    /// Returns an error if zse
+    fn prepend_length(message: &str, mrl: usize) -> Result<String, ()> {
+        let len = message.len();
+        if len > mrl { return Err(()); }
+
+        let len_str = len.to_string();
+        let len_str_len = len_str.len();
+        
+        let mut mrl = mrl;
+
+        let mut digit_count = 0;
+        while mrl > 0 {
+            mrl /= 10;
+            digit_count += 1;
+        }
+
+        if digit_count < len_str_len { return Err(()); }
+        let leading = digit_count % len_str_len;
+
+        let mut out = String::new();
+        for _ in 0..leading { out += "0"; }
+
+        Ok(out + &len_str)
     }
 }

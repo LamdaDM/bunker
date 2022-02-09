@@ -66,7 +66,8 @@ pub struct Config {
     pub endconn_msg: String,
     pub parse_options: ParseOptions,
     pub debug: Debug,
-    pub rm: RouteMap
+    pub rm: RouteMap,
+    pub mrl: usize
 }
 
 pub struct ParseOptions {
