@@ -329,7 +329,7 @@ impl Host {
         let len = message.len();
         if len > mrl { return Err(()); }
 
-        let mut len_str = len.to_string();
+        let len_str = len.to_string();
         let len_str_len = len_str.len();
         
         let mut mrl = mrl;
@@ -341,9 +341,10 @@ impl Host {
         }
 
         let leading = digit_count % len_str_len;
+        
+        let mut out = String::new();
+        for _ in 0..leading { out += "0"; }
 
-        for _ in 0..leading { len_str += "0"; }
-
-        Ok(len_str + &message)
+        Ok(out + &len_str + &message)
     }
 }
