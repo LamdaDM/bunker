@@ -340,7 +340,7 @@ impl Host {
             digit_count += 1;
         }
 
-        let leading = digit_count % len_str_len;
+        let leading = digit_count - len_str_len;
         
         let mut out = String::new();
         for _ in 0..leading { out += "0"; }
