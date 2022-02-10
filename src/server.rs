@@ -295,11 +295,11 @@ impl Host {
                                 end = true;
                             } // Writes confirmation for closing the connection and signals to break;
 
-                            // Writes to the stream and then handles buffers.
-                            cfg.debug.write(&local_debug_handle, &format!("Writing response: {}", res));
-
                             // Prepend length of message to response according to mrl
                             let res = Host::prepend_length(&res, cfg.mrl).unwrap();
+
+                            // Writes to the stream and then handles buffers.
+                            cfg.debug.write(&local_debug_handle, &format!("Writing response: {}", res));
 
                             stream.write(res.as_bytes()).unwrap();
                             stream.flush().unwrap();
@@ -324,7 +324,7 @@ impl Host {
     }
 
     /// Prepends length of the message to the response, according to the given response length.
-    /// Returns an error if zse
+    /// Returns an error if the message exceeds the max response length.
     fn prepend_length(message: &str, mrl: usize) -> Result<String, ()> {
         let len = message.len();
         if len > mrl { return Err(()); }
@@ -340,12 +340,11 @@ impl Host {
             digit_count += 1;
         }
 
-        if digit_count < len_str_len { return Err(()); }
         let leading = digit_count % len_str_len;
 
         let mut out = String::new();
         for _ in 0..leading { out += "0"; }
 
-        Ok(out + &len_str)
+        Ok(out + &message)
     }
 }
