@@ -1,8 +1,6 @@
-use crate::{exception::BunkerError, internal::Threadpool, registerable, cfg::{self, DefaultDebugger}};
+use crate::{exception::InternalError, internal::Threadpool, registerable::{self, Route}, cfg::{self, DefaultDebugger, RouteMap}};
 
-use std::{cell::Cell, collections::BTreeMap, io::{ErrorKind, Read, Write}, net::{SocketAddr, TcpListener}, rc::Rc, sync::Arc};
-
-pub type RouteMap = BTreeMap<String, Box<dyn registerable::Controller>>;
+use std::{cell::{Cell, RefCell}, io::{ErrorKind, Read, Write}, net::{SocketAddr, TcpListener}, rc::Rc, sync::Arc};
 
 /// Builder for configuring server options. 
 /// After setting the options, call `bunker::server::Builder::build`, which will consume the Builder and return a `bunker::server::Instance`.
@@ -31,7 +29,8 @@ pub struct Builder {
     debug: cfg::Debug,
     dw: Option<Box<dyn registerable::DebugFmt>>,
     rm: RouteMap,
-    max_response_length: usize
+    max_response_length: usize,
+    error_response: String
 }
 
 impl Builder {
@@ -46,7 +45,8 @@ impl Builder {
             debug: cfg::Debug::new_on(Box::new(DefaultDebugger)),
             dw: None,
             rm: RouteMap::new(),
-            max_response_length: 9999
+            max_response_length: 9999,
+            error_response: String::new()
         }
     }
 
@@ -97,9 +97,14 @@ impl Builder {
         Builder{endconn_msg, ..self} 
     }
 
+    /// Sets the message to be sent in the event of an internal error.
+    pub fn error_response(self, error_response: String) -> Builder {
+        Builder{ error_response, ..self }
+    }
+
     /// Registers a `registerable::Controller` in the route map, with the path being used as the key to find that controller.
     /// For a client to access an endpoint, the first string after being split must match the path given here. 
-    pub fn register(mut self, controller: Box<dyn registerable::Controller>, path: String) -> Builder {
+    pub fn register(mut self, controller: Box<dyn registerable::Controller>, path: Route) -> Builder {
         self.rm.insert(path, controller);
         self
     
@@ -128,7 +133,8 @@ impl Builder {
             parse_options: self.parse_options,
             debug: self.debug,
             rm: self.rm,
-            mrl: self.max_response_length
+            mrl: self.max_response_length,
+            er: self.error_response
         })
     }
     
@@ -182,7 +188,7 @@ impl Host {
     /// on initialization, and during communication with clients where
     /// the order number for that connection is appended for identification.
     pub fn run(self) {
-        const DEBUG_HANDLE: &str = "server::Instance::run";
+        const DEBUG_HANDLE: &str = "server::Host::run";
         
         self.cfg.debug.write(DEBUG_HANDLE, "Server initialized.");
 
@@ -193,8 +199,8 @@ impl Host {
 
         for stream in listener.incoming() {
             match stream {
-                Ok(mut stream) => {            
-                    let cfg = Arc::clone(&self.cfg);
+                Ok(mut stream) => {
+                    let cfg = Arc::clone(&cfg);
 
                     // Increments original order number, then clones copy.
                     // No need for atomic as number only changes in single-threaded context.
@@ -226,30 +232,20 @@ impl Host {
 
                             cfg.debug.write(&local_debug_handle, &format!("Received message: {}", req));
 
-                            let res: Result<String, BunkerError> = {
+                            let error_b = Rc::new(RefCell::new(String::new()));
+
+                            let mut res: String = {
                                 
                                 // Parses data according to which flag is set.
-                                match if separator_parse {
+                                let (path, msg) = if separator_parse {
                                     match req.split_once(
                                         &cfg.parse_options.separators
                                             .as_ref()
                                             .unwrap()
                                             [..]
                                     ) {
-                                        Some(matched) => Ok(matched),
-                                        None => {
-                                            cfg.debug.write_err(
-                                                &local_debug_handle, 
-                                                &format!(
-                                                    "Could not parse incoming message with the given separators ({:?})\nMessage: {}", 
-                                                    &cfg.parse_options.separators,
-                                                    &req
-                                                )
-                                            );
-                                            Err(BunkerError::BadRequest(
-                                                "No valid path found in message.".to_string()
-                                            ))
-                                        },
+                                        Some((path, msg)) => (Route::Path(path.to_string()), msg),
+                                        None => { (Route::NotFound, req) },
                                     }
                                 } else {
                                     let (path, msg) = req.split_at(cfg.parse_options.position.unwrap());
@@ -262,27 +258,31 @@ impl Host {
                                             msg
                                         )
                                     );
-                                    Ok((path, msg))
-                                } {
-                                    // Matches the result of the parse.
-                                    Ok((path, msg)) => {
-                                        if let Some(req)
-                                            = cfg.rm.get(path) {
-                                                req.accept(msg.to_string())
-                                        } else { 
-                                            // Error results from the path not matching any key in the map.
-                                            Err(BunkerError::BadRequest("Could not find matching path.".to_string())) 
-                                        }
-                                    },
-                                    Err(err) => Err(err),
+                                    (Route::Path(path.to_string()), msg)
+                                };
+                                
+                                // Matches the result of the parse.
+                                if let Some(controller) = cfg.rm.get(&path) {
+                                        controller.serve(msg.to_string(), Rc::clone(&error_b))
+                                } else { 
+
+                                    if let Some(controller) = cfg.rm.get(&Route::NotFound) {
+                                        controller.serve(msg.to_string(), Rc::clone(&error_b))
+                                    } else {
+                                        // Error results from the path not matching any key in the map.
+                                        let err = InternalError::BadRequest(ordern_copy);
+                                        error_b.replace(err.to_string());
+                                        cfg.er.to_owned()
+                                    }
                                 }
                             };
 
-                            // Ensures all results are a String.
-                            let mut res = match res {
-                                Ok(msg) => msg,
-                                Err(err) => err.to_string(),
-                            };
+                            let error = error_b.take();
+
+                            if !error.is_empty() {
+                                cfg.debug.write_err(&local_debug_handle, &error);
+                                res = cfg.er.to_owned();
+                            }
 
                             if res == cfg.endconn_msg { 
                                 
@@ -314,7 +314,7 @@ impl Host {
                 Err(err) => {
                     match err.kind() {
                         ErrorKind::Interrupted => continue,
-                        _ => { panic!("UNEXPECTED ERROR - {:?}", err) }
+                        _ => { println!("UNEXPECTED ERROR - {:?}", err) }
                     }
                 }
             }

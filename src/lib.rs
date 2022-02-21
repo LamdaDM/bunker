@@ -1,5 +1,6 @@
 pub mod server;
 pub mod exception;
+#[allow(deprecated)]
 pub mod registerable;
 
 mod internal;

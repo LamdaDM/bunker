@@ -1,6 +1,6 @@
-use std::{sync::Arc, io::{stdout, Write, ErrorKind, stderr}};
+use std::{sync::Arc, io::{stdout, Write, ErrorKind, stderr}, collections::BTreeMap};
 
-use crate::{server::RouteMap, registerable::{self, DebugFmt}};
+use crate::{registerable::{self, DebugFmt, Route}};
 pub struct Debug {
     state: bool,
     w: Box<dyn registerable::DebugFmt>
@@ -57,6 +57,7 @@ impl DebugFmt for DefaultDebugger {
 }
 
 pub type ConfigAlias = Arc<Config>;
+pub type RouteMap = BTreeMap<Route, Box<dyn registerable::Controller>>;
 
 pub struct Config {
     pub port: u16,
@@ -67,7 +68,8 @@ pub struct Config {
     pub parse_options: ParseOptions,
     pub debug: Debug,
     pub rm: RouteMap,
-    pub mrl: usize
+    pub mrl: usize,
+    pub er: String
 }
 
 pub struct ParseOptions {
