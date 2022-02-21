@@ -270,7 +270,7 @@ impl Host {
                                         controller.serve(msg.to_string(), Rc::clone(&error_b))
                                     } else {
                                         // Error results from the path not matching any key in the map.
-                                        let err = InternalError::BadRequest(ordern_copy);
+                                        let err = InternalError::NoControllerFound(ordern_copy);
                                         error_b.replace(err.to_string());
                                         cfg.er.to_owned()
                                     }

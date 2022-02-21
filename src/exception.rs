@@ -6,7 +6,7 @@ use std::{fmt::Display, io};
 #[derive(Debug)]
 #[deprecated(since="0.2", note="\nnow has no application externally, and is being replaced internally")]
 pub enum BunkerError {
-    NoControllerFound(String),
+    BadRequest(String),
     InvalidThreadPoolSize(usize),
     IO(io::Error)
 }
@@ -20,7 +20,7 @@ impl From<io::Error> for BunkerError {
 impl Display for BunkerError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            BunkerError::NoControllerFound(msg) => write!(f, "EO1 Bad Request: {}", msg),
+            BunkerError::BadRequest(msg) => write!(f, "EO1 Bad Request: {}", msg),
             BunkerError::InvalidThreadPoolSize(input) => write!(f, 
                 "Invalid size assigned to the threadpool!\nGiven: {}\nExpected a number greater than 0", 
                 &input),
@@ -30,7 +30,7 @@ impl Display for BunkerError {
 }
 
 pub enum InternalError {
-    BadRequest(u64),
+    NoControllerFound(u64),
     InvalidThreadPoolSize(usize),
     IO(io::Error)
 }
@@ -43,7 +43,7 @@ impl From<io::Error> for InternalError {
 impl Display for InternalError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            InternalError::BadRequest(order_number) => write!(f, 
+            InternalError::NoControllerFound(order_number) => write!(f, 
                 "Order Number {}'s Request could not be matched to any path! Please add a NotFound controller.", 
                 order_number),
             InternalError::InvalidThreadPoolSize(input) => write!(f, 
