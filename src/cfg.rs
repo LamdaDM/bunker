@@ -1,26 +1,45 @@
-use std::{sync::Arc, io::{stdout, Write, ErrorKind, stderr}, collections::BTreeMap};
+use std::{sync::Arc, io::{stdout, Write, ErrorKind, stderr}, collections::BTreeMap, fmt};
 
 use crate::{registerable::{self, DebugFmt, Route}};
+
+#[derive(PartialEq, Eq, PartialOrd, Ord)]
+pub enum DebugSetting {
+    None,
+    Standard,
+    Error
+}
+
+impl fmt::Display for DebugSetting {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            DebugSetting::None => write!(f, "None"),
+            DebugSetting::Standard => write!(f, "Standard"),
+            DebugSetting::Error => write!(f, "Error"),
+        }
+    }
+}
+
 pub struct Debug {
-    state: bool,
+    state: DebugSetting,
     w: Box<dyn registerable::DebugFmt>
 }
 
-#[allow(dead_code)]
 impl Debug {
-    pub fn new_on(w: Box<dyn registerable::DebugFmt>) -> Debug { Debug{ state: true, w } }
 
-    pub fn new_off(w: Box<dyn registerable::DebugFmt>) -> Debug { Debug{ state: false, w } }
+    pub fn state_equals(&self, other: DebugSetting) -> bool { self.state >= other }
 
-    pub fn off(&mut self) { self.state = false; }
-    pub fn on(&mut self) { self.state = true; }
+    pub fn new(w: Box<dyn registerable::DebugFmt>) -> Debug { Debug{ state: DebugSetting::Standard, w } }
 
-    pub fn state(&self) -> bool { self.state }
+    pub fn replace_writer(&mut self, w: Box<dyn registerable::DebugFmt>) { self.w = w }
+    
+    pub fn off(&mut self) { self.state = DebugSetting::None; }
+    pub fn standard(&mut self) { self.state = DebugSetting::Standard }
+    pub fn error(&mut self) { self.state = DebugSetting::Error }
 
-    pub fn flip(&mut self) { self.state = !self.state; }
+    pub fn get_setting(&self) -> String { self.state.to_string() }
 
     pub fn write(&self, origin: &str, message: &str) {
-        if self.state {
+        if self.state > DebugSetting::None {
             match stdout().write_all(self.w.debug(origin, message).as_bytes()) {
                 Ok(_) => (),
                 Err(err) => match err.kind() {
@@ -32,7 +51,7 @@ impl Debug {
     }
 
     pub fn write_err(&self, origin: &str, message: &str) {
-        if self.state {
+        if self.state > DebugSetting::Standard {
             match stderr().write_all(self.w.debug(origin, message).as_bytes()) {
                 Ok(_) => (),
                 Err(err) => match err.kind() {

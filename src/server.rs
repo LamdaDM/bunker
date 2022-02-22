@@ -1,4 +1,4 @@
-use crate::{exception::InternalError, internal::Threadpool, registerable::{self, Route}, cfg::{self, DefaultDebugger, RouteMap}};
+use crate::{exception::InternalError, internal::Threadpool, registerable::{self, Route}, cfg::{self, DefaultDebugger, RouteMap, DebugSetting}};
 
 use std::{cell::{Cell, RefCell}, io::{ErrorKind, Read, Write}, net::{SocketAddr, TcpListener}, rc::Rc, sync::Arc};
 
@@ -42,7 +42,7 @@ impl Builder {
             addr: [127, 0, 0, 1],
             endconn_msg: "CCONN".to_string(),
             parse_options: cfg::ParseOptions::position(1),
-            debug: cfg::Debug::new_on(Box::new(DefaultDebugger)),
+            debug: cfg::Debug::new(Box::new(DefaultDebugger)),
             dw: None,
             rm: RouteMap::new(),
             max_response_length: 9999,
@@ -50,6 +50,7 @@ impl Builder {
         }
     }
 
+    #[deprecated(since="0.2", note="use Builder::debugger_level_*")]
     /// Will stop Bunker from writing debugging information to the standard output.
     pub fn debugger_off(mut self) -> Builder {
         self.debug.off();
@@ -57,15 +58,27 @@ impl Builder {
     }
 
     /// Registers a custom implementation of `registerable::DebugFmt` for debugging. 
-    pub fn set_custom_debugger(self, debugger: Box<dyn registerable::DebugFmt>) -> Builder {
-        let state = if self.debug.state() {
-            cfg::Debug::new_on(debugger)
-        } else { 
-            cfg::Debug::new_off(debugger)
-        };
+    pub fn set_custom_debugger(mut self, debugger: Box<dyn registerable::DebugFmt>) -> Builder {
+        self.debug.replace_writer(debugger);
+        self
+    }
 
-        Builder { debug: state, ..self }
+    /// Sets debugger to never write.
+    pub fn debugger_level_none(mut self) -> Builder {
+        self.debug.off();
+        self
+    }
 
+    /// Sets debugger to write anything.
+    pub fn debugger_level_standard(mut self) -> Builder {
+        self.debug.standard();
+        self
+    }
+
+    /// Sets debugger to write errors.
+    pub fn debugger_level_error(mut self) -> Builder {
+        self.debug.error();
+        self
     }
 
     pub fn port(self, port: u16) -> Builder { 
@@ -170,8 +183,17 @@ impl Host {
     pub fn get_parse_option(&self) -> (Option<usize>, &Option<Vec<char>>) {
         self.cfg.parse_options.get_prop()
     }
-    pub fn get_enconn_msg(&self) -> &str { &self.cfg.endconn_msg }
-    pub fn is_debugger_on(&self) -> bool { self.cfg.debug.state() }
+    pub fn get_endconn_msg(&self) -> &str { &self.cfg.endconn_msg }
+    
+    /// Returns debugger level.
+    /// Can be either:
+    /// - "None"
+    /// - "Standard"
+    /// - "Error"
+    pub fn get_debugger_level(&self) -> String { self.cfg.debug.get_setting() }
+
+    #[deprecated(since="0.2", note="use get_debugger_level instead and compare string")]
+    pub fn is_debugger_on(&self) -> bool { self.cfg.debug.state_equals(DebugSetting::Standard) }
 
     /// Initializes the TCP socket server, binding to the assigned port, 
     /// and starts listening for connections. Once a connection is found,
