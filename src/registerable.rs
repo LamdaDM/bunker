@@ -1,4 +1,4 @@
-use std::{cell::RefCell, rc::Rc};
+use std::{cell::RefCell, rc::Rc, fmt};
 
 use crate::exception::BunkerError;
 
@@ -48,4 +48,45 @@ pub trait Controller : Send + Sync {
 pub trait DebugFmt: Send + Sync {
     fn debug(&self, origin: &str, message: &str) -> String;
     fn debug_err(&self, origin: &str, message: &str) -> String { self.debug(origin, message) }
+}
+
+#[derive(PartialEq, Eq, PartialOrd, Ord, Clone)]
+pub enum DebugSetting {
+    None,
+    Standard,
+    Error
+}
+
+impl fmt::Display for DebugSetting {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            DebugSetting::None => write!(f, "None"),
+            DebugSetting::Standard => write!(f, "Standard"),
+            DebugSetting::Error => write!(f, "Error"),
+        }
+    }
+}
+
+#[derive(Clone)]
+pub enum ParseOptions {
+    Position(usize),
+    Separators(Vec<char>)
+}
+
+impl ParseOptions {
+    pub fn position(position: usize) -> ParseOptions { 
+        ParseOptions::Position(position)
+    }
+    pub fn separator(separator: Vec<char>) -> ParseOptions { 
+        ParseOptions::Separators(separator)
+    }
+
+    /// Checks if option is set to using separators. If it is not,
+    /// it is set to using position. 
+    pub fn is_separators(&self) -> bool {
+        match self {
+            ParseOptions::Position(_) => false,
+            ParseOptions::Separators(_) => true,
+        }
+    }
 }

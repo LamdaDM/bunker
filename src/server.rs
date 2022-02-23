@@ -1,6 +1,27 @@
-use crate::{exception::InternalError, internal::Threadpool, registerable::{self, Route}, cfg::{self, DefaultDebugger, RouteMap, DebugSetting}};
+use crate::{exception::InternalError, internal::Threadpool, registerable::{self, Route, DebugSetting}, cfg::{self, DefaultDebugger, RouteMap}};
 
 use std::{cell::{Cell, RefCell}, io::{ErrorKind, Read, Write}, net::{SocketAddr, TcpListener}, rc::Rc, sync::Arc};
+
+pub struct RouteMapBuilder(RouteMap);
+
+impl RouteMapBuilder {
+    fn new() -> RouteMapBuilder {
+        RouteMapBuilder(RouteMap::new())
+    }
+
+    /// Registers a `registerable::Controller` in the route map, with the path being used as the key to find that controller.
+    /// For a client to access an endpoint, the route after being split must match the path given here. 
+    pub fn register(mut self, controller: Box<dyn registerable::Controller>, path: Route) -> RouteMapBuilder {
+        if self.0.contains_key(&path) {
+            self.0.remove(&path);
+        }
+
+        self.0.insert(path, controller);
+        self
+    }
+
+    fn build(self) -> RouteMap { self.0 }
+}
 
 /// Builder for configuring server options. 
 /// After setting the options, call `bunker::server::Builder::build`, which will consume the Builder and return a `bunker::server::Instance`.
@@ -25,12 +46,11 @@ pub struct Builder {
     read_buffer_size: usize,
     addr: [u8; 4],
     endconn_msg: String,
-    parse_options: cfg::ParseOptions,
+    parse_options: registerable::ParseOptions,
     debug: cfg::Debug,
-    dw: Option<Box<dyn registerable::DebugFmt>>,
-    rm: RouteMap,
+    rmb: RouteMapBuilder,
     max_response_length: usize,
-    error_response: String
+    response_on_error: String
 }
 
 impl Builder {
@@ -41,12 +61,11 @@ impl Builder {
             read_buffer_size: 1024,
             addr: [127, 0, 0, 1],
             endconn_msg: "CCONN".to_string(),
-            parse_options: cfg::ParseOptions::position(1),
+            parse_options: registerable::ParseOptions::position(1),
             debug: cfg::Debug::new(Box::new(DefaultDebugger)),
-            dw: None,
-            rm: RouteMap::new(),
+            rmb: RouteMapBuilder::new(),
             max_response_length: 9999,
-            error_response: String::new()
+            response_on_error: String::new()
         }
     }
 
@@ -111,28 +130,35 @@ impl Builder {
     }
 
     /// Sets the message to be sent in the event of an internal error.
-    pub fn error_response(self, error_response: String) -> Builder {
-        Builder{ error_response, ..self }
+    pub fn response_on_error(self, error_response: String) -> Builder {
+        Builder{ response_on_error: error_response, ..self }
     }
 
     /// Registers a `registerable::Controller` in the route map, with the path being used as the key to find that controller.
-    /// For a client to access an endpoint, the first string after being split must match the path given here. 
-    pub fn register(mut self, controller: Box<dyn registerable::Controller>, path: Route) -> Builder {
-        self.rm.insert(path, controller);
-        self
-    
+    /// For a client to access an endpoint, the route after being split must match the path given here. 
+    pub fn register(self, controller: Box<dyn registerable::Controller>, path: Route) -> Builder {
+        let rmb = self.rmb.register(controller, path);
+        Builder{rmb, ..self}
+    }
+
+    pub fn configure_routes<F>(self, f: F) -> Builder
+        where 
+            F : FnOnce(RouteMapBuilder) -> RouteMapBuilder + 'static
+    {
+        let rmb = f(self.rmb);
+        Builder{rmb, ..self}
     }
 
     /// Configures the server to split incoming messages at the first instance of a character matching one of the given separators.
     /// The first string will be used as the path to pass the second string down to any matching controllers. 
     pub fn parse_separator(self, separator: &Vec<char>) -> Builder { 
-        Builder{ parse_options: cfg::ParseOptions::separator(separator.clone()), ..self } 
+        Builder{ parse_options: registerable::ParseOptions::separator(separator.clone()), ..self } 
     }
 
     /// Configures the server to split incoming messages at the given position.
     /// The first string will be used as the path to pass the second string down to any matching controllers. 
     pub fn parse_position(self, position: usize) -> Builder { 
-        Builder{ parse_options: cfg::ParseOptions::position(position), ..self } 
+        Builder{ parse_options: registerable::ParseOptions::position(position), ..self } 
     }
 
     /// Converts the builder into a `server::Config`, for creating an Instance.
@@ -145,9 +171,9 @@ impl Builder {
             endconn_msg: self.endconn_msg, 
             parse_options: self.parse_options,
             debug: self.debug,
-            rm: self.rm,
+            rm: self.rmb.build(),
             mrl: self.max_response_length,
-            er: self.error_response
+            er: self.response_on_error
         })
     }
     
@@ -180,20 +206,15 @@ impl Host {
     pub fn get_port(&self) -> u16 { self.cfg.port }
     pub fn get_thread_count(&self) -> usize { self.threadpool.get_size() }
     pub fn get_read_buffer_size(&self) -> usize { self.cfg.read_buffer_size }
-    pub fn get_parse_option(&self) -> (Option<usize>, &Option<Vec<char>>) {
-        self.cfg.parse_options.get_prop()
+    pub fn get_parse_option(&self) -> registerable::ParseOptions {
+        self.cfg.parse_options.clone()
     }
     pub fn get_endconn_msg(&self) -> &str { &self.cfg.endconn_msg }
     
-    /// Returns debugger level.
-    /// Can be either:
-    /// - "None"
-    /// - "Standard"
-    /// - "Error"
-    pub fn get_debugger_level(&self) -> String { self.cfg.debug.get_setting() }
+    pub fn get_debugger_level(&self) -> DebugSetting { self.cfg.debug.get_setting() }
 
-    #[deprecated(since="0.2", note="use get_debugger_level instead and compare string")]
-    pub fn is_debugger_on(&self) -> bool { self.cfg.debug.state_equals(DebugSetting::Standard) }
+    #[deprecated(since="0.2", note="use get_debugger_level instead and compare variants")]
+    pub fn is_debugger_on(&self) -> bool { self.cfg.debug.is_state(DebugSetting::Standard) }
 
     /// Initializes the TCP socket server, binding to the assigned port, 
     /// and starts listening for connections. Once a connection is found,
@@ -237,8 +258,6 @@ impl Host {
 
                     self.threadpool.execute(move|| {
 
-                        let separator_parse = cfg.parse_options.is_separators();
-
                         // Buffer for data received from client.
                         let mut buff = vec![0 as u8; cfg.read_buffer_size];
                     
@@ -247,40 +266,41 @@ impl Host {
                         loop {
                             let size = stream.read(&mut buff[..]).unwrap();
 
-                            cfg.debug.write(&local_debug_handle, &format!("(size: {}) Raw incoming data: {:?}", size, &buff[0..size]));
+                            cfg.debug.write(&local_debug_handle, 
+                                &format!("(size: {}) Raw incoming data: {:?}", size, &buff[0..size]));
 
                             let req = String::from_utf8_lossy(&buff[0..size]);
                             let req = req.trim(); // Removes whitespace for whitespace-sensitive parsing options.
 
-                            cfg.debug.write(&local_debug_handle, &format!("Received message: {}", req));
+                            cfg.debug.write(&local_debug_handle, 
+                                &format!("Received message: {}", req));
 
                             let error_b = Rc::new(RefCell::new(String::new()));
 
                             let mut res: String = {
                                 
                                 // Parses data according to which flag is set.
-                                let (path, msg) = if separator_parse {
-                                    match req.split_once(
-                                        &cfg.parse_options.separators
-                                            .as_ref()
-                                            .unwrap()
-                                            [..]
-                                    ) {
-                                        Some((path, msg)) => (Route::Path(path.to_string()), msg),
-                                        None => { (Route::NotFound, req) },
-                                    }
-                                } else {
-                                    let (path, msg) = req.split_at(cfg.parse_options.position.unwrap());
-                                    cfg.debug.write(
-                                        &local_debug_handle, 
-                                        &format!(
-                                            "Parsed message with the given position ({})!\nPath: {}\nMessage: {}", 
-                                            cfg.parse_options.position.unwrap(), 
-                                            path, 
-                                            msg
-                                        )
-                                    );
-                                    (Route::Path(path.to_string()), msg)
+                                let (path, msg) = match &cfg.parse_options {
+                                    registerable::ParseOptions::Position(pos) => {
+                                        let (path, msg) = req.split_at(*pos);
+                                        cfg.debug.write(
+                                            &local_debug_handle,
+                                            &format!(
+                                                "Parsed message with the given position ({})!\nPath: {}\nMessage: {}", 
+                                                pos, 
+                                                path, 
+                                                msg
+                                            )
+                                        );
+
+                                        (Route::Path(path.to_string()), msg)
+                                    },
+                                    registerable::ParseOptions::Separators(chars) => {
+                                        match req.split_once(&chars[..]) {
+                                            Some((path, msg)) => (Route::Path(path.to_string()), msg),
+                                            None => (Route::NotFound, req),
+                                        }
+                                    },
                                 };
                                 
                                 // Matches the result of the parse.
