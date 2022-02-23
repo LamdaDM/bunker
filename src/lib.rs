@@ -1,5 +1,6 @@
 pub mod server;
 pub mod exception;
+#[allow(deprecated)]
 pub mod registerable;
 
 mod internal;
@@ -7,8 +8,7 @@ mod cfg;
 
 #[cfg(test)]
 mod tests {
-
-    use crate::{cfg::ParseOptions, internal::Threadpool};
+    use crate::{registerable::ParseOptions, internal::Threadpool};
 
     #[test]
     fn parse_options_separators_check() {

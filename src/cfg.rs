@@ -1,26 +1,28 @@
-use std::{sync::Arc, io::{stdout, Write, ErrorKind, stderr}};
+use std::{sync::Arc, io::{stdout, Write, ErrorKind, stderr}, collections::BTreeMap};
 
-use crate::{server::RouteMap, registerable::{self, DebugFmt}};
+use crate::{registerable::{self, DebugFmt, Route, ParseOptions, DebugSetting}};
+
 pub struct Debug {
-    state: bool,
+    state: DebugSetting,
     w: Box<dyn registerable::DebugFmt>
 }
 
-#[allow(dead_code)]
 impl Debug {
-    pub fn new_on(w: Box<dyn registerable::DebugFmt>) -> Debug { Debug{ state: true, w } }
 
-    pub fn new_off(w: Box<dyn registerable::DebugFmt>) -> Debug { Debug{ state: false, w } }
+    pub fn is_state(&self, other: DebugSetting) -> bool { self.state >= other }
 
-    pub fn off(&mut self) { self.state = false; }
-    pub fn on(&mut self) { self.state = true; }
+    pub fn new(w: Box<dyn registerable::DebugFmt>) -> Debug { Debug{ state: DebugSetting::Standard, w } }
 
-    pub fn state(&self) -> bool { self.state }
+    pub fn replace_writer(&mut self, w: Box<dyn registerable::DebugFmt>) { self.w = w }
+    
+    pub fn off(&mut self) { self.state = DebugSetting::None; }
+    pub fn standard(&mut self) { self.state = DebugSetting::Standard }
+    pub fn error(&mut self) { self.state = DebugSetting::Error }
 
-    pub fn flip(&mut self) { self.state = !self.state; }
+    pub fn get_setting(&self) -> DebugSetting { self.state.clone() }
 
     pub fn write(&self, origin: &str, message: &str) {
-        if self.state {
+        if self.state > DebugSetting::None {
             match stdout().write_all(self.w.debug(origin, message).as_bytes()) {
                 Ok(_) => (),
                 Err(err) => match err.kind() {
@@ -32,7 +34,7 @@ impl Debug {
     }
 
     pub fn write_err(&self, origin: &str, message: &str) {
-        if self.state {
+        if self.state > DebugSetting::Standard {
             match stderr().write_all(self.w.debug(origin, message).as_bytes()) {
                 Ok(_) => (),
                 Err(err) => match err.kind() {
@@ -57,6 +59,7 @@ impl DebugFmt for DefaultDebugger {
 }
 
 pub type ConfigAlias = Arc<Config>;
+pub type RouteMap = BTreeMap<Route, Box<dyn registerable::Controller>>;
 
 pub struct Config {
     pub port: u16,
@@ -67,47 +70,6 @@ pub struct Config {
     pub parse_options: ParseOptions,
     pub debug: Debug,
     pub rm: RouteMap,
-    pub mrl: usize
-}
-
-pub struct ParseOptions {
-    pub position: Option<usize>,
-    pub separators: Option<Vec<char>>
-}
-
-impl ParseOptions {
-    pub fn position(position: usize) -> ParseOptions { 
-        ParseOptions{ position: Some(position), separators: None } 
-    }
-    pub fn separator(separator: Vec<char>) -> ParseOptions { 
-        ParseOptions{ position: None, separators: Some(separator) } 
-    }
-    pub fn is_empty(&self) -> bool { 
-        self.position.is_none() && self.separators.is_none() 
-    }
-    pub fn is_full(&self) -> bool {
-        self.position.is_some() && self.separators.is_some()
-    }
-    pub fn get_prop(&self) -> (Option<usize>, &Option<Vec<char>>) { 
-        (self.position, &self.separators) 
-    }
-
-    /// Checks if option is set to using separators. If it is not,
-    /// it is set to using position. 
-    /// 
-    /// Will panic if somehow both or neither are set.
-    pub fn is_separators(&self) -> bool {
-        
-        if self.is_full() || self.is_empty() {
-            panic!(
-                "INTERNAL ERROR: Parse options are invalid. 
-                    Both position and separators are {}",
-                if self.is_full() { "set" }
-                else { "empty" }
-            );
-        }
-
-        self.separators.is_some() 
-            && self.position.is_none()
-    }
+    pub mrl: usize,
+    pub er: String
 }
